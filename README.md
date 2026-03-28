@@ -1,37 +1,164 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DealCRM — Track. Analyze. Acquire.
 
-## Getting Started
+A CRM built for startup acquisitions. Track deals, manage founders, score opportunities, and move targets through a pipeline — in one clean workspace.
 
-First, run the development server:
+---
+
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS v4 |
+| Auth + DB | Supabase (Auth + Postgres) |
+| Icons | lucide-react |
+| Validation | Zod v4 + react-hook-form |
+| Dates | date-fns |
+
+---
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Create a Supabase project
+
+1. Go to [supabase.com](https://supabase.com) and create a new project.
+2. Copy your **Project URL** and **anon public key** from Project Settings → API.
+
+### 3. Configure environment variables
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local`:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+### 4. Run the database schema
+
+In your Supabase project, go to **SQL Editor** and run the full contents of:
+
+```
+supabase/schema.sql
+```
+
+This creates:
+- `profiles` table (auto-populated on signup via trigger)
+- `deals` table (with computed `final_score`)
+- `founders` table (cascade-deleted with deals)
+- `notes` table (cascade-deleted with deals)
+- `activities` table
+- Row Level Security policies for all tables
+- `updated_at` triggers
+
+### 5. (Optional) Seed sample data
+
+In the SQL Editor, run `supabase/seed.sql` after replacing `YOUR_USER_ID` with your actual Supabase auth user UUID (found in Authentication → Users after signing up once).
+
+### 6. Fix conflicting route file
+
+Because this project started from a Next.js scaffold, there is a root-level `app/page.tsx` that re-exports from `app/(public)/page.tsx`. To resolve the route conflict, delete one of them:
+
+**Easiest fix:**
+```bash
+# On macOS/Linux:
+rm "app/(public)/page.tsx"
+
+# On Windows (PowerShell):
+Remove-Item "app/(public)/page.tsx"
+```
+
+After deletion, the landing page at `app/page.tsx` will serve `/` cleanly.
+
+### 7. Start the dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Project Structure
 
-## Learn More
+```
+app/
+  (public)/page.tsx              Landing page (/)  ← delete this after setup
+  page.tsx                       Landing page (/) — the canonical one
+  (auth)/
+    layout.tsx                   Centered auth shell
+    login/page.tsx               Sign in
+    signup/page.tsx              Create account
+  (app)/
+    layout.tsx + app-shell.tsx   Protected app with sidebar
+    dashboard/page.tsx
+    deals/
+      page.tsx                   Deal list with filter/search/sort
+      new/page.tsx               Create deal
+      [id]/page.tsx              Deal detail
+      [id]/edit/page.tsx         Edit deal
+    pipeline/page.tsx            Kanban board
+    founders/page.tsx            All founders across deals
+    analytics/page.tsx           Metrics and distribution charts
+    settings/page.tsx            Profile and account
 
-To learn more about Next.js, take a look at the following resources:
+components/
+  ui/           Primitives: Button, Input, Select, Textarea, Badge, Card, Modal, EmptyState, StatCard
+  layout/       Sidebar, Topbar, PageHeader
+  deals/        DealForm, DealsFilterBar, DealDetailActions, DealStageControl
+  founders/     FounderSection, FounderCard, FounderForm
+  notes/        NotesList, NoteEditor, NoteItem
+  pipeline/     PipelineColumn
+  settings/     SettingsForm
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+lib/
+  supabase/client.ts    Browser Supabase client
+  supabase/server.ts    Server Supabase client (async cookies, Next.js 16)
+  validations/          Zod schemas: auth, deal, founder, note
+  utils.ts              cn(), formatCurrency(), formatDate(), constants
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+types/index.ts          All shared TypeScript interfaces
+middleware.ts           Route protection via Supabase session check
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deal Score Formula
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-"# dealcrm" 
+```
+final_score = round(
+  (potential_score × 0.40) +
+  (traction_score  × 0.40) +
+  ((100 - risk_score) × 0.20)
+)
+```
+
+This is a **generated column** in Postgres — always computed automatically, never stale.
+
+---
+
+## Auth Flow
+
+- `middleware.ts` intercepts every request and checks the Supabase session
+- Unauthenticated → redirected to `/login`
+- Authenticated users visiting `/login` or `/signup` → redirected to `/dashboard`
+- Profile row auto-created on signup via a Postgres trigger on `auth.users`
+
+---
+
+## Supabase Notes
+
+- **Email confirmation**: Disabled by default in many projects. If signup doesn't redirect to dashboard, go to Authentication → Settings → Disable "Enable email confirmations".
+- **RLS**: All tables enforce Row Level Security. No cross-user data leakage possible.
+- **Generated columns**: `final_score` on `deals` is Postgres-generated — never write it directly from the app. It updates automatically when score fields change.
